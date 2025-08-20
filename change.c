@@ -4,6 +4,12 @@
 #include <strings.h>
 #include "csapp.h"
 #include "parse.h"
+//typedef struct {
+//    int rio_fd;                /* 文件描述符 */
+//    int rio_cnt;               /* 缓冲区中未读字节数 */
+//    char *rio_bufptr;          /* 下一个未读字节指针 */
+//    char rio_buf[RIO_BUFSIZE]; /* 内部缓冲区 */
+//} rio_t;
 
 int main(){
     char url[MAXLINE];
@@ -41,5 +47,47 @@ void change_httpdata(rio_t *rio,struct UrlData *u,char * new_httpdata){
         sprintf(Host_hdr,"Host: %s\r\n",u->host);
     }
     sprintf(new_httpdata,"%s%s%s%s%s",Reqline,Host_hdr,Con_hdr,Pcon_hdr,Cdata);
+    return;
+}
+void doit(int fd){
+    char buf[MAXLINE], method[MAXLINE], url[MAXLINE], version[MAXLINE];
+    char new_httpdata[MAXLINE], urltemp[MAXLINE];
+    struct UrlData u;
+    rio_t rio, server_rio;
+    Rio_readinitb(&rio, fd);
+    Rio_readlineb(&rio, buf, MAXLINE);
+
+    sscanf(buf, "%s %s %s", method, url, version);
+    strcpy(urltemp, url);   //赋值url副本以供读者写者使用，因为在解析url中，url可能改变 
+    
+    /*只接受GEI请求*/
+    if (strcmp(method, "GET") != 0){
+        printf ("The proxy can not handle this method: %s\n", method);
+        return;
+    }
+    
+    if (readcache(fd, urltemp) != 0)    //如果读者读取缓存成功的话，直接返回 
+        return;
+
+    parse_url(url, &u);     //解析url 
+    change_httpdata(&rio, &u, new_httpdata);    //修改http数据，存入 new_httpdata中 
+    
+    int server_fd = Open_clientfd(u.host, u.port);
+    size_t n;
+
+    Rio_readinitb(&server_rio, server_fd);
+    Rio_writen(server_fd, new_httpdata, strlen(new_httpdata));
+
+    char cache[MAX_OBJECT_SIZE];
+    int sum = 0;
+    while((n = Rio_readlineb(&server_rio, buf, MAXLINE)) != 0){
+        Rio_writen(fd, buf, n);
+        sum += n;
+        strcat(cache, buf);
+    }
+    printf("proxy send %ld bytes to client\n", sum);
+    if (sum < MAX_OBJECT_SIZE)
+        writecache(cache, urltemp); //如果可以的话，读入缓存 
+    close(server_fd);
     return;
 }
